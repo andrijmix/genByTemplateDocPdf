@@ -3,6 +3,8 @@ import os
 from datetime import datetime
 from docxtpl import DocxTemplate
 from docx2pdf import convert
+import yaml
+import jinja2
 
 def format_date(val):
     if pd.isnull(val):
@@ -23,15 +25,28 @@ def format_number(val):
         return "{:,.2f}".format(val).replace(",", " ").replace(".", ",")
     return str(val)
 
-# === 1. Введення параметрів від користувача ===
-credits_path = input("Введіть шлях до файлу кредитів (credits.xlsx): ").strip() or "credits.xlsx"
-payments_path = input("Введіть шлях до файлу платежів (payments.xlsx): ").strip() or "payments.xlsx"
-template_path = input("Введіть шлях до шаблону Word (template.docx): ").strip() or "template.docx"
-output_dir = input("Введіть шлях для збереження результату (output_docs): ").strip() or "output_docs"
+# ==== floatformat filter for template ====
+def floatformat(val, precision=2):
+    try:
+        precision = int(precision)
+        return f"{float(val):.{precision}f}".replace('.', ',')
+    except Exception:
+        return val
 
-save_format = input("У якому форматі зберігати документи? (docx/pdf/both): ").strip().lower() or "both"
-common_column = input("Введіть назву спільного стовпця для об'єднання таблиць (id): ").strip()
-file_name_column = input("Введіть назву стовпця для імені файлу (КД або ПІБ): ").strip()
+jinja_env = jinja2.Environment()
+jinja_env.filters['floatformat'] = floatformat
+
+# === 1. Читання параметрів з config.yaml ===
+with open("config.yaml", encoding="utf-8") as f:
+    config = yaml.safe_load(f)
+
+credits_path = config.get("credits_path", "credits.xlsx")
+payments_path = config.get("payments_path", "payments.xlsx")
+template_path = config.get("template_path", "template.docx")
+output_dir = config.get("output_dir", "output_docs")
+save_format = config.get("save_format", "both").lower()
+common_column = config.get("common_column", "id")
+file_name_column = config.get("file_name_column", "id")
 
 # === 2. Налаштування форматів збереження ===
 save_docx = save_format in ("docx", "both")
@@ -74,7 +89,7 @@ for borrower_id, group in grouped:
     for col in credits_df.columns:
         val = borrower_info[col]
         if isinstance(val, (int, float)):
-            context[f"{col}_credit"] = format_number(val)
+            context[f"{col}_credit"] = val  # не форматуй тут, залиш сире число для фільтра!
         elif isinstance(val, datetime):
             context[f"{col}_credit"] = format_date(val)
         else:
@@ -89,13 +104,13 @@ for borrower_id, group in grouped:
             val = row[col]
 
             if isinstance(val, (int, float)):
-                val = format_number(val)
+                row_data[f"{col}_payment"] = val  # залишаємо число, не форматуй!
             elif isinstance(val, datetime):
-                val = format_date(val)
+                row_data[f"{col}_payment"] = format_date(val)
             elif pd.isnull(val):
-                val = "—"
-
-            row_data[f"{col}_payment"] = val
+                row_data[f"{col}_payment"] = "—"
+            else:
+                row_data[f"{col}_payment"] = val
 
         payment_rows.append(row_data)
 
@@ -103,7 +118,7 @@ for borrower_id, group in grouped:
 
     # Завантаження шаблону
     tpl = DocxTemplate(template_path)
-    tpl.render(context)
+    tpl.render(context, jinja_env)
 
     # Формування імені файлу
     safe_name = str(borrower_info.get(file_name_column, borrower_id)).replace(" ", "_")

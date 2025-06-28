@@ -5,6 +5,7 @@ from datetime import datetime
 from docxtpl import DocxTemplate
 from docx2pdf import convert
 import jinja2
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import yaml
@@ -54,7 +55,7 @@ else:
     main_name = input("Вкажіть ім'я основної таблиці (main.xlsx): ").strip() or "main.xlsx"
     template_path = input("Вкажіть шлях до шаблону Word (template.docx): ").strip() or "template.docx"
     output_dir = input("Куди зберігати документи (output_docs): ").strip() or "output_docs"
-    save_format = input("Формат збереження (docx/pdf/both): ").strip().lower() or "both"
+    save_format = input("Формат збереження (docx/pdf/both): ").strip().lower() or "docx"
     common_column = input("Назва спільного стовпця (id): ").strip() or "id"
     file_name_column = input("Назва стовпця для імені файлу (id): ").strip() or "id"
 
@@ -66,7 +67,6 @@ pdf_output_dir = os.path.join(output_dir, "pdfs")
 if save_pdf:
     os.makedirs(pdf_output_dir, exist_ok=True)
 
-# ==== 2. Знаходимо main.xlsx і всі додаткові таблиці ====
 main_path = os.path.join(root_dir, main_name)
 if not os.path.exists(main_path):
     raise FileNotFoundError(f"Основний файл не знайдено: {main_path}")
@@ -77,7 +77,6 @@ main_df.columns = main_df.columns.str.strip()
 all_xlsx = glob.glob(os.path.join(root_dir, "*.xlsx"))
 other_xlsx = [f for f in all_xlsx if os.path.abspath(f) != os.path.abspath(main_path)]
 
-# ==== 3. Завантажуємо всі інші таблиці (phones, payments, address...) ====
 other_tables = {}
 for fname in other_xlsx:
     name = os.path.splitext(os.path.basename(fname))[0].lower()
@@ -85,24 +84,17 @@ for fname in other_xlsx:
     df.columns = df.columns.str.strip()
     other_tables[name] = df
 
-# ==== 4. Генерація DOCX ====
-created_docx_files = []
-
-for idx, borrower in main_df.iterrows():
+def generate_docx(borrower):
     context = {}
-    # Додаємо всі поля з main_df (можна форматувати тут як хочеш)
+    # Додаємо всі поля з main_df
     for col in main_df.columns:
         val = borrower[col]
         context[f"{col}_credit"] = val if pd.notnull(val) else "—"
 
-    # Для кожної додаткової таблиці робимо підбір по ключу (one-to-many)
     for tablename, df in other_tables.items():
         if common_column not in df.columns:
-            continue  # Пропускаємо таблиці без спільного ключа
-
+            continue
         filtered = df[df[common_column] == borrower[common_column]]
-
-        # Формуємо список словників для шаблону
         rows = []
         for _, row in filtered.iterrows():
             row_dict = {}
@@ -117,14 +109,23 @@ for idx, borrower in main_df.iterrows():
 
     tpl = DocxTemplate(template_path)
     tpl.render(context, jinja_env)
-
     safe_name = str(borrower.get(file_name_column, borrower[common_column])).replace(" ", "_")
     docx_filename = os.path.join(output_dir, f"doc_{safe_name}.docx")
     tpl.save(docx_filename)
-    created_docx_files.append(docx_filename)
+    return docx_filename
 
-print(f"✅ Успішно створено {len(created_docx_files)} DOCX документів.")
+# === 5. Паралельна генерація DOCX ===
+created_docx_files = []
+with ThreadPoolExecutor() as executor:
+    futures = [executor.submit(generate_docx, borrower) for _, borrower in main_df.iterrows()]
+    for i, future in enumerate(as_completed(futures), 1):
+        fname = future.result()
+        created_docx_files.append(fname)
+        print(f"  [{i}/{len(futures)}] Згенеровано: {os.path.basename(fname)}")
 
+print(f"\n✅ Успішно створено {len(created_docx_files)} DOCX документів.")
+
+# === 6. Конвертація в PDF ===
 if save_pdf:
     print("\n📄 Починаємо конвертацію DOCX в PDF...")
     try:

@@ -5,6 +5,7 @@ from docxtpl import DocxTemplate
 from docx2pdf import convert
 import yaml
 import jinja2
+import glob
 
 def format_date(val):
     if pd.isnull(val):
@@ -18,14 +19,6 @@ def format_date(val):
             return val.strftime('%d.%m.%Y %H:%M:%S')
     return str(val)
 
-def format_number(val):
-    if pd.isnull(val):
-        return '—'
-    if isinstance(val, (int, float)):
-        return "{:,.2f}".format(val).replace(",", " ").replace(".", ",")
-    return str(val)
-
-# ==== floatformat filter for template ====
 def floatformat(val, precision=2):
     try:
         precision = int(precision)
@@ -41,100 +34,84 @@ with open("config.yaml", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 credits_path = config.get("credits_path", "credits.xlsx")
-payments_path = config.get("payments_path", "payments.xlsx")
+common_column = config.get("common_column", "id")
 template_path = config.get("template_path", "template.docx")
 output_dir = config.get("output_dir", "output_docs")
 save_format = config.get("save_format", "both").lower()
-common_column = config.get("common_column", "id")
 file_name_column = config.get("file_name_column", "id")
 
-# === 2. Налаштування форматів збереження ===
 save_docx = save_format in ("docx", "both")
 save_pdf = save_format in ("pdf", "both")
 
-# === 3. Створення папок ===
 os.makedirs(output_dir, exist_ok=True)
 pdf_output_dir = os.path.join(output_dir, "pdfs")
 if save_pdf:
     os.makedirs(pdf_output_dir, exist_ok=True)
 
-# === 4. Читання Excel-файлів ===
+# === 2. Читання credits.xlsx ===
 credits_df = pd.read_excel(credits_path)
-payments_df = pd.read_excel(payments_path)
-
-# Очищення назв стовпців від пробілів
 credits_df.columns = credits_df.columns.str.strip()
-payments_df.columns = payments_df.columns.str.strip()
 
-# Перевірка наявності спільного стовпця
-if common_column not in credits_df.columns or common_column not in payments_df.columns:
-    raise ValueError(f"Спільного стовпця '{common_column}' немає в одній із таблиць. Перевірте дані.")
+root_dir = os.path.dirname(os.path.abspath(credits_path))
+all_xlsx = glob.glob(os.path.join(root_dir, "*.xlsx"))
+other_xlsx = [f for f in all_xlsx if os.path.abspath(f) != os.path.abspath(credits_path)]
 
-# Злиття даних
-merged_df = pd.merge(payments_df, credits_df, on=common_column, how="left", suffixes=('_payment', '_credit'))
+# === 3. Завантажуємо всі інші таблиці (phones, payments, address...) ===
+other_tables = {}
+for fname in other_xlsx:
+    name = os.path.splitext(os.path.basename(fname))[0].lower()
+    df = pd.read_excel(fname)
+    df.columns = df.columns.str.strip()
+    other_tables[name] = df
 
-# Групування
-grouped = merged_df.groupby(common_column)
-
-# === 5. Генерація всіх DOCX ===
+# === 4. Генерація DOCX ===
 created_docx_files = []
 
-for borrower_id, group in grouped:
-    borrower_info = group.iloc[0]
-
-    # Створення контексту
+for idx, borrower in credits_df.iterrows():
     context = {}
 
-    # Дані з кредитів
+    # Додаємо всі поля з credits_df (можна форматувати тут як хочеш)
     for col in credits_df.columns:
-        val = borrower_info[col]
-        if isinstance(val, (int, float)):
-            context[f"{col}_credit"] = val  # не форматуй тут, залиш сире число для фільтра!
-        elif isinstance(val, datetime):
-            context[f"{col}_credit"] = format_date(val)
-        else:
-            context[f"{col}_credit"] = val if pd.notnull(val) else "—"
+        val = borrower[col]
+        context[f"{col}_credit"] = val if pd.notnull(val) else "—"
 
-    # Дані з платежів
-    payment_rows = []
-    payment_columns = [col for col in payments_df.columns if col != common_column]
-    for _, row in group.iterrows():
-        row_data = {}
-        for col in payment_columns:
-            val = row[col]
+    # Для кожної додаткової таблиці робимо підбір по ключу (одна-many, може бути 0..N рядків!)
+    for tablename, df in other_tables.items():
+        if common_column not in df.columns:
+            continue  # Пропускаємо таблиці без спільного ключа
 
-            if isinstance(val, (int, float)):
-                row_data[f"{col}_payment"] = val  # залишаємо число, не форматуй!
-            elif isinstance(val, datetime):
-                row_data[f"{col}_payment"] = format_date(val)
-            elif pd.isnull(val):
-                row_data[f"{col}_payment"] = "—"
-            else:
-                row_data[f"{col}_payment"] = val
+        filtered = df[df[common_column] == borrower[common_column]]
 
-        payment_rows.append(row_data)
-
-    context["payments_table"] = payment_rows
+        # Формуємо список словників для шаблону
+        rows = []
+        for _, row in filtered.iterrows():
+            row_dict = {}
+            for col in df.columns:
+                val = row[col]
+                # Автоформатування: дати і числа
+                if isinstance(val, datetime):
+                    row_dict[col] = format_date(val)
+                else:
+                    row_dict[col] = val if pd.notnull(val) else "—"
+            rows.append(row_dict)
+        context[f"{tablename}_table"] = rows
 
     # Завантаження шаблону
     tpl = DocxTemplate(template_path)
     tpl.render(context, jinja_env)
 
     # Формування імені файлу
-    safe_name = str(borrower_info.get(file_name_column, borrower_id)).replace(" ", "_")
+    safe_name = str(borrower.get(file_name_column, borrower[common_column])).replace(" ", "_")
     docx_filename = os.path.join(output_dir, f"doc_{safe_name}.docx")
 
-    # Збереження DOCX
     tpl.save(docx_filename)
     created_docx_files.append(docx_filename)
 
 print(f"✅ Успішно створено {len(created_docx_files)} DOCX документів.")
 
-# === 6. Масова конвертація у PDF ===
 if save_pdf:
     print("\n📄 Починаємо конвертацію DOCX в PDF...")
     try:
-        # convert(папка_з_DOCX, папка_куди_зберегти_PDF)
         convert(output_dir, pdf_output_dir)
         print(f"✅ Успішно конвертовано всі документи у папку: {pdf_output_dir}")
     except Exception as e:

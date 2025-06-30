@@ -7,18 +7,7 @@ import jinja2
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import tkinter as tk
-from tkinter import filedialog, messagebox
-
-try:
-    import yaml
-    config_path = "config.yaml"
-    if os.path.exists(config_path):
-        with open(config_path, encoding="utf-8") as f:
-            config = yaml.safe_load(f)
-    else:
-        config = None
-except ImportError:
-    config = None
+from tkinter import filedialog, messagebox, scrolledtext
 
 def format_date(val):
     if pd.isnull(val):
@@ -42,8 +31,6 @@ def floatformat(val, precision=2):
 jinja_env = jinja2.Environment()
 jinja_env.filters['floatformat'] = floatformat
 
-# ========================= GUI =========================
-
 class App:
     def __init__(self, master):
         self.master = master
@@ -57,7 +44,6 @@ class App:
         self.file_name_column = tk.StringVar(value="id")
 
         row = 0
-
         tk.Label(master, text="Папка з таблицями:").grid(row=row, column=0, sticky="e")
         tk.Entry(master, textvariable=self.root_dir, width=40).grid(row=row, column=1)
         tk.Button(master, text="...", command=self.select_root_dir).grid(row=row, column=2)
@@ -87,6 +73,11 @@ class App:
         row += 1
 
         tk.Button(master, text="Старт", command=self.generate).grid(row=row, column=0, columnspan=3, pady=10)
+        row += 1
+
+        # Лог вікно
+        self.log = scrolledtext.ScrolledText(master, width=60, height=15, state='disabled', font=("Consolas", 10))
+        self.log.grid(row=row, column=0, columnspan=3, pady=5, sticky="we")
 
     def select_root_dir(self):
         dirname = filedialog.askdirectory(title="Оберіть папку з Excel файлами")
@@ -109,8 +100,20 @@ class App:
         if dirname:
             self.output_dir.set(dirname)
 
+    def log_write(self, text, end="\n"):
+        self.log['state'] = 'normal'
+        self.log.insert('end', text + end)
+        self.log.see('end')
+        self.log['state'] = 'disabled'
+        self.master.update_idletasks()
+
     def generate(self):
+        import threading
+        threading.Thread(target=self._generate_thread).start()
+
+    def _generate_thread(self):
         try:
+            self.log_write("=== Старт генерації DOCX ===")
             root_dir = self.root_dir.get()
             main_path = self.main_file.get()
             template_path = self.template_file.get()
@@ -119,7 +122,7 @@ class App:
             file_name_column = self.file_name_column.get()
 
             if not all([os.path.exists(main_path), os.path.exists(template_path), os.path.isdir(root_dir)]):
-                messagebox.showerror("Помилка", "Перевірте всі шляхи до файлів!")
+                self.log_write("❌ Помилка: Перевірте всі шляхи до файлів!")
                 return
 
             os.makedirs(output_dir, exist_ok=True)
@@ -134,6 +137,7 @@ class App:
                 df = pd.read_excel(fname)
                 df.columns = df.columns.str.strip()
                 other_tables[name] = df
+            self.log_write(f"Знайдено {len(main_df)} записів. Запущено потоки...")
 
             def generate_docx(borrower):
                 context = {}
@@ -168,9 +172,10 @@ class App:
                 for i, future in enumerate(as_completed(futures), 1):
                     fname = future.result()
                     created_docx_files.append(fname)
-            messagebox.showinfo("Готово", f"✅ Успішно створено {len(created_docx_files)} DOCX документів у {output_dir}")
+                    self.log_write(f"[{i}/{len(futures)}] Згенеровано: {os.path.basename(fname)}")
+            self.log_write(f"\n✅ Успішно створено {len(created_docx_files)} DOCX документів у {output_dir}\n")
         except Exception as e:
-            messagebox.showerror("Помилка", str(e))
+            self.log_write("❌ ПОМИЛКА: " + str(e))
 
 
 if __name__ == "__main__":

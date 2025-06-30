@@ -1,0 +1,8 @@
+data_folder: D:\pyProjects\gen_doc\data
+credits_path: main.xlsx
+template_path: template.docx
+output_dir: output_docs2
+save_format: pdf          # docx / pdf / both
+common_column: id
+file_name_column: id
+decimal_places: 2

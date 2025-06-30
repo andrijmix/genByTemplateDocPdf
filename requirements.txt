@@ -1,0 +1,6 @@
+pandas
+docxtpl
+docx2pdf
+jinja2
+pyyaml
+openpyxl

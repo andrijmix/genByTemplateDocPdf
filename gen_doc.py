@@ -3,9 +3,11 @@ import os
 import glob
 from datetime import datetime
 from docxtpl import DocxTemplate
-from docx2pdf import convert
 import jinja2
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 try:
     import yaml
@@ -40,98 +42,138 @@ def floatformat(val, precision=2):
 jinja_env = jinja2.Environment()
 jinja_env.filters['floatformat'] = floatformat
 
-# ==== 1. Отримання налаштувань ====
-if config:
-    root_dir = config.get("data_folder", ".")
-    main_name = config.get("main_file", "main.xlsx")
-    template_path = config.get("template_path", "template.docx")
-    output_dir = config.get("output_dir", "output_docs")
-    save_format = config.get("save_format", "both").lower()
-    common_column = config.get("common_column", "id")
-    file_name_column = config.get("file_name_column", "id")
-else:
-    print("Конфіг файл не знайдено! Введіть дані вручну:")
-    root_dir = input("Вкажіть папку з таблицями (де main.xlsx): ").strip() or "."
-    main_name = input("Вкажіть ім'я основної таблиці (main.xlsx): ").strip() or "main.xlsx"
-    template_path = input("Вкажіть шлях до шаблону Word (template.docx): ").strip() or "template.docx"
-    output_dir = input("Куди зберігати документи (output_docs): ").strip() or "output_docs"
-    save_format = input("Формат збереження (docx/pdf/both): ").strip().lower() or "docx"
-    common_column = input("Назва спільного стовпця (id): ").strip() or "id"
-    file_name_column = input("Назва стовпця для імені файлу (id): ").strip() or "id"
+# ========================= GUI =========================
 
-save_docx = save_format in ("docx", "both")
-save_pdf = save_format in ("pdf", "both")
+class App:
+    def __init__(self, master):
+        self.master = master
+        master.title("DOCX Generator")
 
-os.makedirs(output_dir, exist_ok=True)
-pdf_output_dir = os.path.join(output_dir, "pdfs")
-if save_pdf:
-    os.makedirs(pdf_output_dir, exist_ok=True)
+        self.root_dir = tk.StringVar(value=".")
+        self.main_file = tk.StringVar()
+        self.template_file = tk.StringVar()
+        self.output_dir = tk.StringVar(value="output_docs")
+        self.common_column = tk.StringVar(value="id")
+        self.file_name_column = tk.StringVar(value="id")
 
-main_path = os.path.join(root_dir, main_name)
-if not os.path.exists(main_path):
-    raise FileNotFoundError(f"Основний файл не знайдено: {main_path}")
+        row = 0
 
-main_df = pd.read_excel(main_path)
-main_df.columns = main_df.columns.str.strip()
+        tk.Label(master, text="Папка з таблицями:").grid(row=row, column=0, sticky="e")
+        tk.Entry(master, textvariable=self.root_dir, width=40).grid(row=row, column=1)
+        tk.Button(master, text="...", command=self.select_root_dir).grid(row=row, column=2)
+        row += 1
 
-all_xlsx = glob.glob(os.path.join(root_dir, "*.xlsx"))
-other_xlsx = [f for f in all_xlsx if os.path.abspath(f) != os.path.abspath(main_path)]
+        tk.Label(master, text="Основний Excel-файл:").grid(row=row, column=0, sticky="e")
+        tk.Entry(master, textvariable=self.main_file, width=40).grid(row=row, column=1)
+        tk.Button(master, text="...", command=self.select_main_file).grid(row=row, column=2)
+        row += 1
 
-other_tables = {}
-for fname in other_xlsx:
-    name = os.path.splitext(os.path.basename(fname))[0].lower()
-    df = pd.read_excel(fname)
-    df.columns = df.columns.str.strip()
-    other_tables[name] = df
+        tk.Label(master, text="Шаблон DOCX:").grid(row=row, column=0, sticky="e")
+        tk.Entry(master, textvariable=self.template_file, width=40).grid(row=row, column=1)
+        tk.Button(master, text="...", command=self.select_template_file).grid(row=row, column=2)
+        row += 1
 
-def generate_docx(borrower):
-    context = {}
-    # Додаємо всі поля з main_df
-    for col in main_df.columns:
-        val = borrower[col]
-        context[f"{col}_credit"] = val if pd.notnull(val) else "—"
+        tk.Label(master, text="Папка збереження:").grid(row=row, column=0, sticky="e")
+        tk.Entry(master, textvariable=self.output_dir, width=40).grid(row=row, column=1)
+        tk.Button(master, text="...", command=self.select_output_dir).grid(row=row, column=2)
+        row += 1
 
-    for tablename, df in other_tables.items():
-        if common_column not in df.columns:
-            continue
-        filtered = df[df[common_column] == borrower[common_column]]
-        rows = []
-        for _, row in filtered.iterrows():
-            row_dict = {}
-            for col in df.columns:
-                val = row[col]
-                if isinstance(val, datetime):
-                    row_dict[col] = format_date(val)
-                else:
-                    row_dict[col] = val if pd.notnull(val) else "—"
-            rows.append(row_dict)
-        context[f"{tablename}_table"] = rows
+        tk.Label(master, text="Назва спільного стовпця:").grid(row=row, column=0, sticky="e")
+        tk.Entry(master, textvariable=self.common_column).grid(row=row, column=1, columnspan=2, sticky="we")
+        row += 1
 
-    tpl = DocxTemplate(template_path)
-    tpl.render(context, jinja_env)
-    safe_name = str(borrower.get(file_name_column, borrower[common_column])).replace(" ", "_")
-    docx_filename = os.path.join(output_dir, f"doc_{safe_name}.docx")
-    tpl.save(docx_filename)
-    return docx_filename
+        tk.Label(master, text="Стовпець для імені файлу:").grid(row=row, column=0, sticky="e")
+        tk.Entry(master, textvariable=self.file_name_column).grid(row=row, column=1, columnspan=2, sticky="we")
+        row += 1
 
-# === 5. Паралельна генерація DOCX ===
-created_docx_files = []
-with ThreadPoolExecutor() as executor:
-    futures = [executor.submit(generate_docx, borrower) for _, borrower in main_df.iterrows()]
-    for i, future in enumerate(as_completed(futures), 1):
-        fname = future.result()
-        created_docx_files.append(fname)
-        print(f"  [{i}/{len(futures)}] Згенеровано: {os.path.basename(fname)}")
+        tk.Button(master, text="Старт", command=self.generate).grid(row=row, column=0, columnspan=3, pady=10)
 
-print(f"\n✅ Успішно створено {len(created_docx_files)} DOCX документів.")
+    def select_root_dir(self):
+        dirname = filedialog.askdirectory(title="Оберіть папку з Excel файлами")
+        if dirname:
+            self.root_dir.set(dirname)
 
-# === 6. Конвертація в PDF ===
-if save_pdf:
-    print("\n📄 Починаємо конвертацію DOCX в PDF...")
-    try:
-        convert(output_dir, pdf_output_dir)
-        print(f"✅ Успішно конвертовано всі документи у папку: {pdf_output_dir}")
-    except Exception as e:
-        print(f"⚠️ Помилка при масовій конвертації у PDF: {e}")
+    def select_main_file(self):
+        filename = filedialog.askopenfilename(title="Оберіть основний Excel-файл", filetypes=[("Excel files", "*.xlsx")])
+        if filename:
+            self.main_file.set(filename)
+            self.root_dir.set(os.path.dirname(filename))
 
-print("\n🏁 Роботу завершено!")
+    def select_template_file(self):
+        filename = filedialog.askopenfilename(title="Оберіть шаблон DOCX", filetypes=[("DOCX files", "*.docx")])
+        if filename:
+            self.template_file.set(filename)
+
+    def select_output_dir(self):
+        dirname = filedialog.askdirectory(title="Оберіть папку для збереження DOCX")
+        if dirname:
+            self.output_dir.set(dirname)
+
+    def generate(self):
+        try:
+            root_dir = self.root_dir.get()
+            main_path = self.main_file.get()
+            template_path = self.template_file.get()
+            output_dir = self.output_dir.get()
+            common_column = self.common_column.get()
+            file_name_column = self.file_name_column.get()
+
+            if not all([os.path.exists(main_path), os.path.exists(template_path), os.path.isdir(root_dir)]):
+                messagebox.showerror("Помилка", "Перевірте всі шляхи до файлів!")
+                return
+
+            os.makedirs(output_dir, exist_ok=True)
+
+            main_df = pd.read_excel(main_path)
+            main_df.columns = main_df.columns.str.strip()
+            all_xlsx = glob.glob(os.path.join(root_dir, "*.xlsx"))
+            other_xlsx = [f for f in all_xlsx if os.path.abspath(f) != os.path.abspath(main_path)]
+            other_tables = {}
+            for fname in other_xlsx:
+                name = os.path.splitext(os.path.basename(fname))[0].lower()
+                df = pd.read_excel(fname)
+                df.columns = df.columns.str.strip()
+                other_tables[name] = df
+
+            def generate_docx(borrower):
+                context = {}
+                for col in main_df.columns:
+                    val = borrower[col]
+                    context[f"{col}_credit"] = val if pd.notnull(val) else "—"
+                for tablename, df in other_tables.items():
+                    if common_column not in df.columns:
+                        continue
+                    filtered = df[df[common_column] == borrower[common_column]]
+                    rows = []
+                    for _, row in filtered.iterrows():
+                        row_dict = {}
+                        for col in df.columns:
+                            val = row[col]
+                            if isinstance(val, datetime):
+                                row_dict[col] = format_date(val)
+                            else:
+                                row_dict[col] = val if pd.notnull(val) else "—"
+                        rows.append(row_dict)
+                    context[f"{tablename}_table"] = rows
+                tpl = DocxTemplate(template_path)
+                tpl.render(context, jinja_env)
+                safe_name = str(borrower.get(file_name_column, borrower[common_column])).replace(" ", "_")
+                docx_filename = os.path.join(output_dir, f"doc_{safe_name}.docx")
+                tpl.save(docx_filename)
+                return docx_filename
+
+            created_docx_files = []
+            with ThreadPoolExecutor() as executor:
+                futures = [executor.submit(generate_docx, borrower) for _, borrower in main_df.iterrows()]
+                for i, future in enumerate(as_completed(futures), 1):
+                    fname = future.result()
+                    created_docx_files.append(fname)
+            messagebox.showinfo("Готово", f"✅ Успішно створено {len(created_docx_files)} DOCX документів у {output_dir}")
+        except Exception as e:
+            messagebox.showerror("Помилка", str(e))
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()

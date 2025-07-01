@@ -1,7 +1,9 @@
 # main.py
-import tkinter as tk
+import sys
 import multiprocessing
-from ui import App
+
+# Імпортуємо новий UI
+from ui import main as winforms_main
 
 
 def main():
@@ -17,35 +19,14 @@ def main():
         except RuntimeError:
             pass  # Метод вже встановлено
 
-    # Створюємо та запускаємо GUI
-    root = tk.Tk()
-
-    # Налаштування вікна
-    root.geometry("600x500")
-    root.resizable(True, True)
-
-    # Встановлюємо заголовок з інформацією про потужність
-    cpu_count = multiprocessing.cpu_count()
-    optimal_workers = max(2, min(8, cpu_count // 2))
-    root.title(f"DOCX Generator - {optimal_workers}/{cpu_count} потоків")
-
-    # Створюємо додаток
-    app = App(root)
-
-    # Додаємо обробку закриття
-    def on_closing():
-        if hasattr(app, 'stop_flag'):
-            app.stop_flag = True
-        root.quit()
-        root.destroy()
-
-    root.protocol("WM_DELETE_WINDOW", on_closing)
-
-    # Запускаємо основний цикл
+    # Запускаємо нову Windows Forms UI
     try:
-        root.mainloop()
+        winforms_main()
     except KeyboardInterrupt:
-        on_closing()
+        sys.exit(0)
+    except Exception as e:
+        print(f"Помилка запуску: {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

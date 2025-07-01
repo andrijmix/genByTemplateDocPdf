@@ -143,7 +143,11 @@ class App:
                 context = {}
                 for col in main_df.columns:
                     val = borrower[col]
-                    context[f"{col}_credit"] = val if pd.notnull(val) else "—"
+                    key = f"{col}_credit"
+                    if isinstance(val, datetime):
+                        context[key] = format_date(val)
+                    else:
+                        context[key] = val if pd.notnull(val) else "—"
                 for tablename, df in other_tables.items():
                     if common_column not in df.columns:
                         continue

@@ -14,7 +14,7 @@ class App:
         self.output_dir = tk.StringVar(value="output_docs")
         self.common_column = tk.StringVar(value="id")
         self.file_name_column = tk.StringVar(value="id")
-
+        self.stop_flag = False
         row = 0
         tk.Label(master, text="Папка з таблицями:").grid(row=row, column=0, sticky="e")
         tk.Entry(master, textvariable=self.root_dir, width=40).grid(row=row, column=1)
@@ -45,6 +45,7 @@ class App:
         row += 1
 
         tk.Button(master, text="Старт", command=self.generate).grid(row=row, column=0, columnspan=3, pady=10)
+        tk.Button(master,text = "Стоп", command =self.stop_generation).grid(row=row, column=1, columnspan=3, pady=2)
         row += 1
 
         self.log = scrolledtext.ScrolledText(master, width=60, height=15, state='disabled', font=("Consolas", 10))
@@ -82,9 +83,12 @@ class App:
         import threading
         threading.Thread(target=self._generate_thread).start()
 
-
+    def stop_generation(self):
+        self.stop_flag = True
+        self.log_write("⛔ Зупинка процесу запрошена...")
 
     def _generate_thread(self):
+        self.stop_flag = False
         generate_documents(
             root_dir=self.root_dir.get(),
             main_path=self.main_file.get(),
@@ -92,5 +96,6 @@ class App:
             output_dir=self.output_dir.get(),
             common_column=self.common_column.get(),
             file_name_column=self.file_name_column.get(),
-            log_callback=self.log_write
+            log_callback=self.log_write,
+            stop_flag=lambda: self.stop_flag
         )

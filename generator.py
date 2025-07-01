@@ -11,7 +11,7 @@ jinja_env = jinja2.Environment()
 jinja_env.filters['floatformat'] = floatformat
 
 def generate_documents(root_dir, main_path, template_path, output_dir,
-                       common_column, file_name_column, log_callback):
+                       common_column, file_name_column, log_callback, stop_flag):
     try:
         log_callback("=== Старт генерації DOCX ===")
 
@@ -64,11 +64,20 @@ def generate_documents(root_dir, main_path, template_path, output_dir,
 
         created_docx_files = []
         with ThreadPoolExecutor() as executor:
-            futures = [executor.submit(generate_docx, borrower) for _, borrower in main_df.iterrows()]
+            futures = []
+            for i, borrower in enumerate(main_df.to_dict(orient='records'), 1):
+                if stop_flag():
+                    log_callback("⛔ Генерацію зупинено користувачем.")
+                    break
+                futures.append(executor.submit(generate_docx, borrower))
+
             for i, future in enumerate(as_completed(futures), 1):
                 fname = future.result()
                 created_docx_files.append(fname)
                 log_callback(f"[{i}/{len(futures)}] Згенеровано: {os.path.basename(fname)}")
+                if stop_flag():
+                    log_callback("⛔ Генерацію зупинено користувачем.")
+                    break
 
         log_callback(f"\n✅ Успішно створено {len(created_docx_files)} DOCX документів у {output_dir}\n")
 

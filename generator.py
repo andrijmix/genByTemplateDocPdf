@@ -1,14 +1,15 @@
-import os
 import glob
-import pandas as pd
 import multiprocessing
-from datetime import datetime
-from docxtpl import DocxTemplate
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from utils import format_date, floatformat, is_date_string
-import jinja2
-import pickle
+import os
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from datetime import datetime
+
+import jinja2
+import pandas as pd
+from docxtpl import DocxTemplate
+
+from utils import format_date, floatformat, is_date_string
 
 
 # Отримуємо оптимальну кількість процесів (половина від доступних ядер)
@@ -207,7 +208,7 @@ def generate_documents(root_dir, main_path, template_path, output_dir,
 
         # Читаємо основну таблицю
         log_callback("📖 Читання основної таблиці...")
-        main_df = pd.read_excel(main_path)
+        main_df = pd.read_excel(main_path,dtype=str,keep_default_na=False)
         main_df.columns = main_df.columns.str.strip()
 
         # Читаємо додаткові таблиці

@@ -37,34 +37,72 @@ def process_single_document(args):
 
         # Визначаємо фільтри прямо тут для уникнення проблем з імпортом
         def dateonly_filter(val):
-            """Тільки дата"""
+            """Тільки дата без часу"""
             if pd.isnull(val):
                 return '—'
-            if isinstance(val, str) and is_date_string(val):
-                try:
-                    val = pd.to_datetime(val, errors='coerce')
-                    if pd.isna(val):
-                        return str(val)
-                except:
-                    return str(val)
-            if isinstance(val, datetime):
-                return val.strftime('%d.%m.%Y')
-            return str(val)
+
+            try:
+                # Спочатку спробуємо конвертувати все в pandas datetime
+                parsed_date = None
+
+                # Якщо це вже datetime об'єкт
+                if hasattr(val, 'strftime'):
+                    parsed_date = val
+                # Якщо це рядок
+                elif isinstance(val, str):
+                    if is_date_string(val):
+                        parsed_date = pd.to_datetime(val, errors='coerce')
+                    else:
+                        return str(val)  # Не схоже на дату
+                # Якщо це число (timestamp)
+                elif isinstance(val, (int, float)):
+                    parsed_date = pd.to_datetime(val, unit='s', errors='coerce')
+                else:
+                    # Спробуємо конвертувати будь-що інше
+                    parsed_date = pd.to_datetime(val, errors='coerce')
+
+                # Якщо успішно розпарсили дату
+                if parsed_date is not None and pd.notna(parsed_date):
+                    # Форматуємо ТІЛЬКИ дату без часу
+                    if hasattr(parsed_date, 'date'):
+                        return parsed_date.date().strftime('%d.%m.%Y')
+                    else:
+                        return parsed_date.strftime('%d.%m.%Y')
+
+                return str(val)
+
+            except Exception as e:
+                return str(val)
 
         def datetime_full_filter(val):
             """Дата з часом"""
             if pd.isnull(val):
                 return '—'
-            if isinstance(val, str) and is_date_string(val):
-                try:
-                    val = pd.to_datetime(val, errors='coerce')
-                    if pd.isna(val):
-                        return str(val)
-                except:
+
+            try:
+                # Pandas Timestamp або будь-який об'єкт з методом strftime
+                if hasattr(val, 'strftime'):
+                    # Перевіряємо чи є час
+                    if hasattr(val, 'time') and val.time() != datetime.min.time():
+                        return val.strftime('%d.%m.%Y %H:%M:%S')
+                    else:
+                        return val.strftime('%d.%m.%Y')
+
+                # Рядок дати
+                if isinstance(val, str):
+                    if is_date_string(val):
+                        parsed_date = pd.to_datetime(val, errors='coerce')
+                        if pd.notna(parsed_date):
+                            if parsed_date.time() != datetime.min.time():
+                                return parsed_date.strftime('%d.%m.%Y %H:%M:%S')
+                            else:
+                                return parsed_date.strftime('%d.%m.%Y')
                     return str(val)
-            if isinstance(val, datetime):
-                    return val.strftime('%d.%m.%Y %H:%M:%S')
-            return str(val)
+
+                return str(val)
+
+            except Exception as e:
+                return str(val)
 
         def number_thousands_filter(val):
             """Число з тисячними розділювачами"""
@@ -112,6 +150,10 @@ def process_single_document(args):
         jinja_env.filters['currency_uah'] = currency_uah_filter
         jinja_env.filters['currency_usd'] = currency_usd_filter
 
+        # Додаткові фільтри для дат (синоніми)
+        jinja_env.filters['date'] = dateonly_filter
+        jinja_env.filters['dateformat'] = dateonly_filter
+
         # Підготовка контексту для шаблону
         context = {}
 
@@ -119,22 +161,26 @@ def process_single_document(args):
         for col in main_columns:
             val = borrower_dict.get(col)
             key = f"{col}_credit"
-            if val is not None and isinstance(val, str) and val != "NaT":
-                # Перевіряємо, чи схоже на дату перед парсингом
-                if is_date_string(val):
+
+            # Спеціальна обробка для дат
+            if val is not None and not pd.isnull(val):
+                # Якщо це datetime об'єкт, зберігаємо його як є
+                if isinstance(val, (pd.Timestamp, datetime)):
+                    context[key] = val
+                # Якщо це рядок дати
+                elif isinstance(val, str) and val != "NaT" and is_date_string(val):
                     try:
-                        # Використовуємо errors='coerce' для безпечного парсингу
                         parsed_date = pd.to_datetime(val, errors='coerce')
                         if pd.notna(parsed_date):
-                            context[key] = format_date(parsed_date)
+                            context[key] = parsed_date
                         else:
-                            context[key] = val if pd.notnull(val) else "—"
+                            context[key] = val
                     except:
-                        context[key] = val if pd.notnull(val) else "—"
+                        context[key] = val
                 else:
-                    context[key] = val if pd.notnull(val) else "—"
+                    context[key] = val
             else:
-                context[key] = val if val is not None and pd.notnull(val) else "—"
+                context[key] = "—"
 
         # Додаємо дані з додаткових таблиць
         for tablename, df_dict in other_tables.items():
@@ -154,22 +200,26 @@ def process_single_document(args):
                 row_dict = {}
                 for col in df.columns:
                     val = row[col]
-                    if val is not None and isinstance(val, str) and val != "NaT":
-                        # Перевіряємо, чи схоже на дату перед парсингом
-                        if is_date_string(val):
+
+                    # Спеціальна обробка для дат
+                    if val is not None and not pd.isnull(val):
+                        # Якщо це datetime об'єкт, зберігаємо його як є
+                        if isinstance(val, (pd.Timestamp, datetime)):
+                            row_dict[col] = val
+                        # Якщо це рядок дати
+                        elif isinstance(val, str) and val != "NaT" and is_date_string(val):
                             try:
-                                # Використовуємо errors='coerce' для безпечного парсингу
                                 parsed_date = pd.to_datetime(val, errors='coerce')
                                 if pd.notna(parsed_date):
-                                    row_dict[col] = format_date(parsed_date)
+                                    row_dict[col] = parsed_date
                                 else:
-                                    row_dict[col] = val if pd.notnull(val) else "—"
+                                    row_dict[col] = val
                             except:
-                                row_dict[col] = val if pd.notnull(val) else "—"
+                                row_dict[col] = val
                         else:
-                            row_dict[col] = val if pd.notnull(val) else "—"
+                            row_dict[col] = val
                     else:
-                        row_dict[col] = val if val is not None and pd.notnull(val) else "—"
+                        row_dict[col] = "—"
                 rows.append(row_dict)
             context[f"{tablename}_table"] = rows
 
@@ -208,7 +258,8 @@ def generate_documents(root_dir, main_path, template_path, output_dir,
 
         # Читаємо основну таблицю
         log_callback("📖 Читання основної таблиці...")
-        main_df = pd.read_excel(main_path,dtype=str,keep_default_na=False)
+        # Читаємо з автоматичним парсингом дат
+        main_df = pd.read_excel(main_path, parse_dates=True)
         main_df.columns = main_df.columns.str.strip()
 
         # Читаємо додаткові таблиці
@@ -223,7 +274,8 @@ def generate_documents(root_dir, main_path, template_path, output_dir,
                 return
 
             name = os.path.splitext(os.path.basename(fname))[0].lower()
-            df = pd.read_excel(fname)
+            # Читаємо з автоматичним парсингом дат
+            df = pd.read_excel(fname, parse_dates=True)
             df.columns = df.columns.str.strip()
 
             # Конвертуємо DataFrame в формат, який можна серіалізувати
@@ -246,7 +298,7 @@ def generate_documents(root_dir, main_path, template_path, output_dir,
                 break
 
             row_dict = row.to_dict()
-            # Конвертуємо datetime об'єкти в рядки для серіалізації
+            # Конвертуємо datetime об'єкти в рядки для серіалізації, але зберігаємо інформацію про тип
             for key, val in row_dict.items():
                 if isinstance(val, (pd.Timestamp, datetime)):
                     row_dict[key] = val.isoformat()

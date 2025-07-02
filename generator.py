@@ -5,7 +5,7 @@ import multiprocessing
 from datetime import datetime
 from docxtpl import DocxTemplate
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from utils import format_date, floatformat
+from utils import format_date, floatformat, is_date_string
 import jinja2
 import pickle
 import time
@@ -33,7 +33,83 @@ def process_single_document(args):
 
         # Створюємо Jinja2 середовище в кожному процесі
         jinja_env = jinja2.Environment()
+
+        # Визначаємо фільтри прямо тут для уникнення проблем з імпортом
+        def dateonly_filter(val):
+            """Тільки дата"""
+            if pd.isnull(val):
+                return '—'
+            if isinstance(val, str) and is_date_string(val):
+                try:
+                    val = pd.to_datetime(val, errors='coerce')
+                    if pd.isna(val):
+                        return str(val)
+                except:
+                    return str(val)
+            if isinstance(val, datetime):
+                return val.strftime('%d.%m.%Y')
+            return str(val)
+
+        def datetime_full_filter(val):
+            """Дата з часом"""
+            if pd.isnull(val):
+                return '—'
+            if isinstance(val, str) and is_date_string(val):
+                try:
+                    val = pd.to_datetime(val, errors='coerce')
+                    if pd.isna(val):
+                        return str(val)
+                except:
+                    return str(val)
+            if isinstance(val, datetime):
+                    return val.strftime('%d.%m.%Y %H:%M:%S')
+            return str(val)
+
+        def number_thousands_filter(val):
+            """Число з тисячними розділювачами"""
+            try:
+                if isinstance(val, str):
+                    val = val.replace(' ', '').replace(',', '.')
+                num = float(val)
+                formatted = f"{num:.2f}".replace('.', ',')
+                parts = formatted.split(',')
+                integer_part = parts[0]
+                decimal_part = parts[1] if len(parts) > 1 else ''
+                integer_with_spaces = ''
+                for i, digit in enumerate(reversed(integer_part)):
+                    if i > 0 and i % 3 == 0:
+                        integer_with_spaces = ' ' + integer_with_spaces
+                    integer_with_spaces = digit + integer_with_spaces
+                if decimal_part:
+                    return integer_with_spaces + ',' + decimal_part
+                else:
+                    return integer_with_spaces
+            except Exception:
+                return val
+
+        def currency_uah_filter(val):
+            """Гривні"""
+            try:
+                formatted = number_thousands_filter(val)
+                return f"{formatted} ₴"
+            except Exception:
+                return val
+
+        def currency_usd_filter(val):
+            """Долари"""
+            try:
+                formatted = number_thousands_filter(val)
+                return f"{formatted} $"
+            except Exception:
+                return val
+
+        # Реєструємо фільтри
         jinja_env.filters['floatformat'] = floatformat
+        jinja_env.filters['dateonly'] = dateonly_filter
+        jinja_env.filters['datetime_full'] = datetime_full_filter
+        jinja_env.filters['number_thousands'] = number_thousands_filter
+        jinja_env.filters['currency_uah'] = currency_uah_filter
+        jinja_env.filters['currency_usd'] = currency_usd_filter
 
         # Підготовка контексту для шаблону
         context = {}
@@ -43,11 +119,18 @@ def process_single_document(args):
             val = borrower_dict.get(col)
             key = f"{col}_credit"
             if val is not None and isinstance(val, str) and val != "NaT":
-                try:
-                    # Спробуємо розпарсити дату
-                    parsed_date = pd.to_datetime(val)
-                    context[key] = format_date(parsed_date)
-                except:
+                # Перевіряємо, чи схоже на дату перед парсингом
+                if is_date_string(val):
+                    try:
+                        # Використовуємо errors='coerce' для безпечного парсингу
+                        parsed_date = pd.to_datetime(val, errors='coerce')
+                        if pd.notna(parsed_date):
+                            context[key] = format_date(parsed_date)
+                        else:
+                            context[key] = val if pd.notnull(val) else "—"
+                    except:
+                        context[key] = val if pd.notnull(val) else "—"
+                else:
                     context[key] = val if pd.notnull(val) else "—"
             else:
                 context[key] = val if val is not None and pd.notnull(val) else "—"
@@ -71,10 +154,18 @@ def process_single_document(args):
                 for col in df.columns:
                     val = row[col]
                     if val is not None and isinstance(val, str) and val != "NaT":
-                        try:
-                            parsed_date = pd.to_datetime(val)
-                            row_dict[col] = format_date(parsed_date)
-                        except:
+                        # Перевіряємо, чи схоже на дату перед парсингом
+                        if is_date_string(val):
+                            try:
+                                # Використовуємо errors='coerce' для безпечного парсингу
+                                parsed_date = pd.to_datetime(val, errors='coerce')
+                                if pd.notna(parsed_date):
+                                    row_dict[col] = format_date(parsed_date)
+                                else:
+                                    row_dict[col] = val if pd.notnull(val) else "—"
+                            except:
+                                row_dict[col] = val if pd.notnull(val) else "—"
+                        else:
                             row_dict[col] = val if pd.notnull(val) else "—"
                     else:
                         row_dict[col] = val if val is not None and pd.notnull(val) else "—"

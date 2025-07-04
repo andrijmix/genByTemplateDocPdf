@@ -104,6 +104,36 @@ def process_single_document(args):
             except Exception as e:
                 return str(val)
 
+        def datetime_full_no_sec_filter(val):
+            """Дата з часом"""
+            if pd.isnull(val):
+                return '—'
+
+            try:
+                # Pandas Timestamp або будь-який об'єкт з методом strftime
+                if hasattr(val, 'strftime'):
+                    # Перевіряємо чи є час
+                    if hasattr(val, 'time') and val.time() != datetime.min.time():
+                        return val.strftime('%d.%m.%Y %H:%M')
+                    else:
+                        return val.strftime('%d.%m.%Y')
+
+                # Рядок дати
+                if isinstance(val, str):
+                    if is_date_string(val):
+                        parsed_date = pd.to_datetime(val, errors='coerce')
+                        if pd.notna(parsed_date):
+                            if parsed_date.time() != datetime.min.time():
+                                return parsed_date.strftime('%d.%m.%Y %H:%M')
+                            else:
+                                return parsed_date.strftime('%d.%m.%Y')
+                    return str(val)
+
+                return str(val)
+
+            except Exception as e:
+                return str(val)
+
         def number_thousands_filter(val):
             """Число з тисячними розділювачами"""
             try:
@@ -146,6 +176,7 @@ def process_single_document(args):
         jinja_env.filters['floatformat'] = floatformat
         jinja_env.filters['dateonly'] = dateonly_filter
         jinja_env.filters['datetime_full'] = datetime_full_filter
+        jinja_env.filters['datetime_full_no_sec'] = datetime_full_no_sec_filter
         jinja_env.filters['number_thousands'] = number_thousands_filter
         jinja_env.filters['currency_uah'] = currency_uah_filter
         jinja_env.filters['currency_usd'] = currency_usd_filter

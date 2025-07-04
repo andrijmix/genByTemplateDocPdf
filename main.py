@@ -2,8 +2,8 @@
 import sys
 import multiprocessing
 
-# Імпортуємо новий UI
-from ui import main as winforms_main
+# Імпортуємо оновлений UI з тестуванням
+from ui import main as ui_main
 
 
 def main():
@@ -19,9 +19,9 @@ def main():
         except RuntimeError:
             pass  # Метод вже встановлено
 
-    # Запускаємо нову Windows Forms UI
+    # Запускаємо UI з тестуванням
     try:
-        winforms_main()
+        ui_main()
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:

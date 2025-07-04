@@ -4,10 +4,11 @@ import threading
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
                              QWidget, QLabel, QLineEdit, QPushButton, QTextEdit,
                              QFileDialog, QGridLayout, QMessageBox, QProgressBar,
-                             QGroupBox, QFrame)
+                             QGroupBox, QFrame, QCheckBox)
 from PyQt5.QtCore import QThread, pyqtSignal, Qt
 from PyQt5.QtGui import QFont, QIcon
 from generator import generate_documents
+from test_generator import run_integration_test
 
 
 class LoggerThread(QThread):
@@ -27,13 +28,34 @@ class LoggerThread(QThread):
         self.running = False
 
 
+class TestThread(QThread):
+    """Потік для запуску тестів"""
+    log_signal = pyqtSignal(str)
+    test_finished_signal = pyqtSignal(bool)  # True якщо тест пройшов
+
+    def __init__(self):
+        super().__init__()
+
+    def run(self):
+        try:
+            # Запускаємо тест
+            success = run_integration_test(log_callback=self.log_message)
+            self.test_finished_signal.emit(success)
+        except Exception as e:
+            self.log_message(f"❌ Критична помилка тестування: {str(e)}")
+            self.test_finished_signal.emit(False)
+
+    def log_message(self, message):
+        self.log_signal.emit(message)
+
+
 class GeneratorThread(QThread):
     """Потік для генерації документів"""
     log_signal = pyqtSignal(str)
     finished_signal = pyqtSignal()
 
     def __init__(self, root_dir, main_file, template_file, output_dir,
-                 common_column, file_name_column):
+                 common_column, file_name_column, run_tests=True):
         super().__init__()
         self.root_dir = root_dir
         self.main_file = main_file
@@ -41,10 +63,36 @@ class GeneratorThread(QThread):
         self.output_dir = output_dir
         self.common_column = common_column
         self.file_name_column = file_name_column
+        self.run_tests = run_tests
         self.stop_flag = False
 
     def run(self):
         try:
+            # Спочатку запускаємо тести якщо потрібно
+            if self.run_tests:
+                self.log_message("=" * 50)
+                self.log_message("🧪 ЗАПУСК СИСТЕМНИХ ТЕСТІВ")
+                self.log_message("=" * 50)
+
+                test_success = run_integration_test(log_callback=self.log_message)
+
+                if not test_success:
+                    self.log_message("=" * 50)
+                    self.log_message("❌ ТЕСТИ ПРОВАЛЕНІ! ГЕНЕРАЦІЯ ЗУПИНЕНА!")
+                    self.log_message("=" * 50)
+                    self.log_message("🔧 Перевірте:")
+                    self.log_message("   • Папку test/ з файлами:")
+                    self.log_message("     - template.docx (шаблон)")
+                    self.log_message("     - reference.docx (еталон)")
+                    self.log_message("   • Коректність шаблону")
+                    self.log_message("   • Згенерований файл: test/generated_test.docx")
+                    return
+                else:
+                    self.log_message("=" * 50)
+                    self.log_message("✅ ТЕСТИ ПРОЙШЛИ! ПОЧАТОК ГЕНЕРАЦІЇ")
+                    self.log_message("=" * 50)
+
+            # Основна генерація
             generate_documents(
                 root_dir=self.root_dir,
                 main_path=self.main_file,
@@ -122,6 +170,7 @@ class App(QMainWindow):
     def __init__(self):
         super().__init__()
         self.generator_thread = None
+        self.test_thread = None
         self.logger_thread = LoggerThread()
         self.logger_thread.log_signal.connect(self.log_write)
         self.logger_thread.start()
@@ -131,9 +180,9 @@ class App(QMainWindow):
 
     def init_ui(self):
         # Основне вікно
-        self.setWindowTitle("DOCX Generator")
-        self.setGeometry(100, 100, 900, 800)
-        self.setMinimumSize(550, 450)
+        self.setWindowTitle("DOCX Generator v2.1 (з системними тестами)")
+        self.setGeometry(100, 100, 900, 850)
+        self.setMinimumSize(550, 500)
 
         # Центральний віджет
         central_widget = QWidget()
@@ -143,7 +192,7 @@ class App(QMainWindow):
         main_layout.setContentsMargins(15, 15, 15, 15)
 
         # Заголовок
-        title_label = QLabel("DOCX Generator")
+        title_label = QLabel("DOCX Generator v2.1")
         title_label.setStyleSheet("""
             QLabel {
                 font-size: 18px;
@@ -154,6 +203,69 @@ class App(QMainWindow):
         """)
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
+
+        # Група тестування
+        test_group = QGroupBox("Налаштування тестування")
+        test_group.setStyleSheet("""
+            QGroupBox {
+                font-size: 14px;
+                font-weight: bold;
+                color: #000000;
+                border: 1px solid #cccccc;
+                border-radius: 4px;
+                margin-top: 10px;
+                padding-top: 10px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                background-color: white;
+            }
+        """)
+        test_layout = QHBoxLayout(test_group)
+
+        self.run_tests_checkbox = QCheckBox("Запускати тести перед генерацією")
+        self.run_tests_checkbox.setChecked(True)
+        self.run_tests_checkbox.setStyleSheet("""
+            QCheckBox {
+                font-size: 12px;
+                color: #000000;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 2px solid #cccccc;
+                border-radius: 3px;
+                background-color: white;
+            }
+            QCheckBox::indicator:checked {
+                border: 2px solid #0078d4;
+                border-radius: 3px;
+                background-color: #0078d4;
+            }
+        """)
+        test_layout.addWidget(self.run_tests_checkbox)
+
+        self.test_only_btn = ModernButton("Тільки тестування")
+        self.test_only_btn.setStyleSheet(self.test_only_btn.styleSheet() + """
+            QPushButton {
+                background-color: #FF9800;
+                min-height: 30px;
+                min-width: 120px;
+            }
+            QPushButton:hover {
+                background-color: #F57C00;
+            }
+        """)
+        self.test_only_btn.clicked.connect(self.run_tests_only)
+        test_layout.addWidget(self.test_only_btn)
+
+        test_layout.addStretch()
+        main_layout.addWidget(test_group)
 
         # Група налаштувань файлів
         files_group = QGroupBox("Налаштування файлів")
@@ -370,6 +482,34 @@ class App(QMainWindow):
         if dirname:
             self.output_dir.setText(dirname)
 
+    def run_tests_only(self):
+        """Запускає тільки тести без основної генерації"""
+        # Очищаємо лог
+        self.log.clear()
+
+        # Запуск тестів в окремому потоці
+        self.test_thread = TestThread()
+        self.test_thread.log_signal.connect(self.log_write)
+        self.test_thread.test_finished_signal.connect(self.test_only_finished)
+
+        # Блокуємо кнопки
+        self.test_only_btn.setEnabled(False)
+        self.start_btn.setEnabled(False)
+
+        self.test_thread.start()
+
+    def test_only_finished(self, success):
+        """Викликається після завершення тестування"""
+        self.test_only_btn.setEnabled(True)
+        self.start_btn.setEnabled(True)
+
+        if success:
+            QMessageBox.information(self, "Тестування",
+                                    "✅ Тести пройшли успішно!\nСистема готова до роботи.")
+        else:
+            QMessageBox.warning(self, "Тестування",
+                                "❌ Тести провалені!\nПеревірте логи для деталей.")
+
     def generate(self):
         """Запускає генерацію документів"""
         # Перевірка заповнення полів
@@ -397,7 +537,8 @@ class App(QMainWindow):
             self.template_file.text(),
             self.output_dir.text(),
             self.common_column.text() or "id",
-            self.file_name_column.text() or "id"
+            self.file_name_column.text() or "id",
+            run_tests=self.run_tests_checkbox.isChecked()
         )
 
         self.generator_thread.log_signal.connect(self.log_write)
@@ -446,7 +587,7 @@ class App(QMainWindow):
 
 
 def main():
-    """Головна функція для запуску програми з Windows Forms UI"""
+    """Головна функція для запуску програми з тестуванням"""
     import multiprocessing
 
     # Ініціалізація багатопроцесорності

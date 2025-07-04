@@ -184,29 +184,34 @@ def process_single_document(args):
                 return str(val)
 
         def datetime_full_filter(val):
-            """Date with time"""
+            """Date with time - завжди показує час (навіть 00:00:00)"""
             if pd.isnull(val):
                 return '—'
 
             try:
-                # Pandas Timestamp or any object with strftime method
-                if hasattr(val, 'strftime'):
-                    # Check if there's time
-                    if hasattr(val, 'time') and val.time() != datetime.min.time():
-                        return val.strftime('%d.%m.%Y %H:%M:%S')
-                    else:
-                        return val.strftime('%d.%m.%Y')
+                parsed_date = None
 
-                # Date string
-                if isinstance(val, str):
+                # Якщо це вже datetime об'єкт
+                if hasattr(val, 'strftime'):
+                    parsed_date = val
+                # Якщо це рядок
+                elif isinstance(val, str):
                     if is_date_string(val):
                         parsed_date = pd.to_datetime(val, errors='coerce')
-                        if pd.notna(parsed_date):
-                            if parsed_date.time() != datetime.min.time():
-                                return parsed_date.strftime('%d.%m.%Y %H:%M:%S')
-                            else:
-                                return parsed_date.strftime('%d.%m.%Y')
-                    return str(val)
+                        if pd.isna(parsed_date):
+                            return str(val)
+                    else:
+                        return str(val)
+                # Якщо це число (timestamp)
+                elif isinstance(val, (int, float)):
+                    parsed_date = pd.to_datetime(val, unit='s', errors='coerce')
+                else:
+                    # Спробуємо конвертувати все інше
+                    parsed_date = pd.to_datetime(val, errors='coerce')
+
+                if parsed_date is not None and pd.notna(parsed_date):
+                    # ЗАВЖДИ показуємо дату + час (навіть якщо час 00:00:00)
+                    return parsed_date.strftime('%d.%m.%Y %H:%M:%S')
 
                 return str(val)
 
@@ -214,35 +219,39 @@ def process_single_document(args):
                 return str(val)
 
         def datetime_full_no_sec_filter(val):
-            """Date with time without seconds"""
+            """Date with time without seconds - завжди показує час (навіть 00:00)"""
             if pd.isnull(val):
                 return '—'
 
             try:
-                # Pandas Timestamp or any object with strftime method
-                if hasattr(val, 'strftime'):
-                    # Check if there's time
-                    if hasattr(val, 'time') and val.time() != datetime.min.time():
-                        return val.strftime('%d.%m.%Y %H:%M')
-                    else:
-                        return val.strftime('%d.%m.%Y')
+                parsed_date = None
 
-                # Date string
-                if isinstance(val, str):
+                # Якщо це вже datetime об'єкт
+                if hasattr(val, 'strftime'):
+                    parsed_date = val
+                # Якщо це рядок
+                elif isinstance(val, str):
                     if is_date_string(val):
                         parsed_date = pd.to_datetime(val, errors='coerce')
-                        if pd.notna(parsed_date):
-                            if parsed_date.time() != datetime.min.time():
-                                return parsed_date.strftime('%d.%m.%Y %H:%M')
-                            else:
-                                return parsed_date.strftime('%d.%m.%Y')
-                    return str(val)
+                        if pd.isna(parsed_date):
+                            return str(val)
+                    else:
+                        return str(val)
+                # Якщо це число (timestamp)
+                elif isinstance(val, (int, float)):
+                    parsed_date = pd.to_datetime(val, unit='s', errors='coerce')
+                else:
+                    # Спробуємо конвертувати все інше
+                    parsed_date = pd.to_datetime(val, errors='coerce')
+
+                if parsed_date is not None and pd.notna(parsed_date):
+                    # ЗАВЖДИ показуємо дату + час без секунд (навіть якщо час 00:00)
+                    return parsed_date.strftime('%d.%m.%Y %H:%M')
 
                 return str(val)
 
             except Exception as e:
                 return str(val)
-
         def number_thousands_filter(val):
             """Number with thousands separators"""
             try:

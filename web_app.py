@@ -80,20 +80,21 @@ def index():
         main_file = request.files.get("main_file")
         template_file = request.files.get("template_file")
         root_zip = request.files.get("root_zip")
+        root_dir = os.path.join(output_dir, "tables")
+        os.makedirs(root_dir, exist_ok=True)
+        if root_zip and root_zip.filename:
+            import zipfile
+            root_zip.seek(0)
+            with zipfile.ZipFile(root_zip, "r") as zip_ref:
+                zip_ref.extractall(root_dir)
         common_column = request.form.get("common_column", "id")
         file_name_column = request.form.get("file_name_column", "id")
 
         # Зберігаємо файли
-        main_path = os.path.join(output_dir, secure_filename(main_file.filename))
-        template_path = os.path.join(output_dir, secure_filename(template_file.filename))
-        root_dir = os.path.join(output_dir, "tables")
-        os.makedirs(root_dir, exist_ok=True)
+        main_path = os.path.join(output_dir, "main.xlsx")
+        template_path = os.path.join(output_dir, "template.docx")
         main_file.save(main_path)
         template_file.save(template_path)
-
-        import zipfile
-        with zipfile.ZipFile(root_zip, "r") as zip_ref:
-            zip_ref.extractall(root_dir)
 
         # Сесія
         sessions[session_id] = {"log": os.path.join(LOGS_FOLDER, f"{session_id}.log"), "result": None}

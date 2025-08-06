@@ -126,7 +126,7 @@ def get_optimal_workers():
     """Returns optimal number of worker processes (half of CPU cores)"""
     cpu_count = multiprocessing.cpu_count()
     # Use half of cores, but minimum 2 and maximum 8 for stability
-    optimal_workers = max(2, min(8, cpu_count // 2))
+    optimal_workers = max(2, min(48, cpu_count // 2))
     return optimal_workers
 
 

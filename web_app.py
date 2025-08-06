@@ -15,6 +15,41 @@ app.secret_key = "some_secret_key"
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+LOGS_FOLDER = "logs"
+os.makedirs(LOGS_FOLDER, exist_ok=True)
+
+sessions = {}  # session_id: {"log": log_path, "result": result_zip}
+
+def background_generate(session_id, root_dir, main_path, template_path, output_dir, common_column, file_name_column):
+    log_path = os.path.join(LOGS_FOLDER, f"{session_id}.log")
+
+    def log_callback(msg):
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(msg + "\n")
+
+    def stop_flag():
+        return False
+
+    output_docs_dir = os.path.join(output_dir, "docs")
+    os.makedirs(output_docs_dir, exist_ok=True)
+
+    generate_documents(
+        root_dir=root_dir,
+        main_path=main_path,
+        template_path=template_path,
+        output_dir=output_docs_dir,
+        common_column=common_column,
+        file_name_column=file_name_column,
+        log_callback=log_callback,
+        stop_flag=stop_flag,
+    )
+
+    # Пакуємо результати
+    result_zip = os.path.join(output_dir, "results.zip")
+    shutil.make_archive(os.path.splitext(result_zip)[0], 'zip', output_docs_dir)
+    sessions[session_id]["result"] = result_zip
+
+
 def clean_old_temp_dirs(base_folder="uploads", minutes=30):
     """Видаляє всі тимчасові папки, старші за вказаний час (default: 30 хвилин)"""
     now = time.time()
@@ -26,74 +61,62 @@ def clean_old_temp_dirs(base_folder="uploads", minutes=30):
                     shutil.rmtree(dir)
                 except Exception as e:
                     print(f"Не вдалося видалити {dir}: {e}")
-
+@app.route("/logs")
+def get_logs():
+    session_id = request.args.get("session_id")
+    log_path = f"logs/{session_id}.log"
+    if os.path.exists(log_path):
+        with open(log_path, encoding='utf-8') as f:
+            return f.read()
+    return ""
 @app.route("/", methods=["GET", "POST"])
 def index():
     clean_old_temp_dirs()
     if request.method == "POST":
-        # Читаємо поля форми
+        import random
+        session_id = str(int(time.time() * 1000)) + str(random.randint(100,999))
+        output_dir = tempfile.mkdtemp(dir=UPLOAD_FOLDER)
         main_file = request.files.get("main_file")
         template_file = request.files.get("template_file")
         root_zip = request.files.get("root_zip")
-        output_dir = tempfile.mkdtemp(dir=UPLOAD_FOLDER)
         common_column = request.form.get("common_column", "id")
         file_name_column = request.form.get("file_name_column", "id")
-        logs = []
-
-        # Валідація
-        if not main_file or not template_file or not root_zip:
-            flash("Завантаж всі потрібні файли!", "danger")
-            return redirect(request.url)
 
         # Зберігаємо файли
         main_path = os.path.join(output_dir, secure_filename(main_file.filename))
         template_path = os.path.join(output_dir, secure_filename(template_file.filename))
         root_dir = os.path.join(output_dir, "tables")
         os.makedirs(root_dir, exist_ok=True)
-
         main_file.save(main_path)
         template_file.save(template_path)
 
-        # Розпаковуємо додаткові таблиці
         import zipfile
         with zipfile.ZipFile(root_zip, "r") as zip_ref:
             zip_ref.extractall(root_dir)
 
-        # Запуск генерації
-        def log_callback(msg):
-            logs.append(msg)
+        # Сесія
+        sessions[session_id] = {"log": os.path.join(LOGS_FOLDER, f"{session_id}.log"), "result": None}
 
-        def stop_flag():
-            return False
+        # Генерація у фоні
+        t = threading.Thread(target=background_generate, args=(session_id, root_dir, main_path, template_path, output_dir, common_column, file_name_column))
+        t.start()
 
-        output_docs_dir = os.path.join(output_dir, "docs")
-        os.makedirs(output_docs_dir, exist_ok=True)
-
-        generate_documents(
-            root_dir=root_dir,
-            main_path=main_path,
-            template_path=template_path,
-            output_dir=output_docs_dir,
-            common_column=common_column,
-            file_name_column=file_name_column,
-            log_callback=log_callback,
-            stop_flag=stop_flag,
-        )
-
-        # Пакуємо результати
-        result_zip = os.path.join(output_dir, "results.zip")
-        shutil.make_archive(os.path.splitext(result_zip)[0], 'zip', output_docs_dir)
-
-        # Повертаємо на сторінку з лінком
-        return render_template(
-            "index.html",
-            logs="\n".join(logs),
-            download_link=url_for("download_file", temp_path=result_zip)
-        )
-
+        return redirect(url_for("progress", session_id=session_id))
     return render_template("index.html", logs=None, download_link=None)
+@app.route("/logs/<session_id>")
+def logs(session_id):
+    log_path = sessions.get(session_id, {}).get("log")
+    if not log_path or not os.path.exists(log_path):
+        return ""
+    with open(log_path, encoding="utf-8") as f:
+        return f.read()
 
-
+@app.route("/result/<session_id>")
+def result(session_id):
+    result_zip = sessions.get(session_id, {}).get("result")
+    if not result_zip or not os.path.exists(result_zip):
+        return "Not ready", 404
+    return send_file(result_zip, as_attachment=True)
 @app.route('/download/')
 def download_file():
     temp_path = request.args.get("temp_path")
@@ -186,6 +209,8 @@ def faq():
     ]
 
     return render_template("faq.html", faqs=faqs)
-
+@app.route("/progress/<session_id>")
+def progress(session_id):
+    return render_template("progress.html", session_id=session_id)
 if __name__ == '__main__':
     app.run(debug=True, port=8080)

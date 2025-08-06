@@ -39,18 +39,26 @@ function checkDone() {
               done = true;
               document.getElementById("donebox").classList.remove("d-none");
               document.getElementById("downloadLink").href = "/result/" + session_id;
+              // Ось тут зупиняємо всі таймери!
+              clearInterval(logsTimer);
+              clearInterval(doneTimer);
+              // Бонус: вимикаємо/ховаємо кнопку STOP
+              document.getElementById('stopBtn').disabled = true;
+              document.getElementById('stopBtn').classList.add("d-none");
           }
       });
 }
-setInterval(fetchLogs, 2000);
-setInterval(checkDone, 2000);
+let logsTimer = setInterval(fetchLogs, 10000);   // 2 секунди - для живих логів
+let doneTimer = setInterval(checkDone, 10000);
+
 
 document.getElementById('stopBtn').onclick = function() {
     fetch("/stop/" + session_id, {method: "POST"})
       .then(_ => {
+        clearInterval(logsTimer);
+        clearInterval(doneTimer);
         document.getElementById('stopBtn').disabled = true;
         document.getElementById('stopBtn').textContent = "Зупиняється...";
-        document.getElementById('stopBtn').classList.add("d-none");
       });
 }
 

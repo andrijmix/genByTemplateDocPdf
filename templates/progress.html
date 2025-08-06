@@ -7,6 +7,7 @@
     <style>
         body { background: #f8fafb; }
         textarea[readonly] { background: #f4f6f8; }
+        .sticky-btn { position: absolute; top: 1.4rem; right: 2.2rem; z-index: 10; }
     </style>
 </head>
 <body>
@@ -16,11 +17,13 @@
     <div id="donebox" class="alert alert-success d-none">
         <a id="downloadLink" href="#" class="btn btn-success">⬇️ Завантажити результати</a>
     </div>
-    <a href="/" class="btn btn-outline-secondary">← На головну</a>
+    <button id="stopBtn" class="btn btn-danger flex-shrink-0">🛑 Зупинити генерацію</button>
+    <a href="/" class="btn btn-outline-secondary flex-shrink-0">← На головну</a>
 </div>
 <script>
 let session_id = "{{ session_id }}";
 let done = false;
+
 function fetchLogs() {
     fetch("/logs/" + session_id)
       .then(response => response.text())
@@ -41,6 +44,16 @@ function checkDone() {
 }
 setInterval(fetchLogs, 2000);
 setInterval(checkDone, 2000);
+
+document.getElementById('stopBtn').onclick = function() {
+    fetch("/stop/" + session_id, {method: "POST"})
+      .then(_ => {
+        document.getElementById('stopBtn').disabled = true;
+        document.getElementById('stopBtn').textContent = "Зупиняється...";
+        document.getElementById('stopBtn').classList.add("d-none");
+      });
+}
+
 </script>
 </body>
 </html>

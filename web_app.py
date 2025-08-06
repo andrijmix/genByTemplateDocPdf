@@ -19,7 +19,7 @@ LOGS_FOLDER = "logs"
 os.makedirs(LOGS_FOLDER, exist_ok=True)
 
 sessions = {}  # session_id: {"log": log_path, "result": result_zip}
-
+stop_flags = {}  # session_id: threading.Event
 def background_generate(session_id, root_dir, main_path, template_path, output_dir, common_column, file_name_column):
     log_path = os.path.join(LOGS_FOLDER, f"{session_id}.log")
 
@@ -28,7 +28,7 @@ def background_generate(session_id, root_dir, main_path, template_path, output_d
             f.write(msg + "\n")
 
     def stop_flag():
-        return False
+        return stop_flags[session_id].is_set()
 
     output_docs_dir = os.path.join(output_dir, "docs")
     os.makedirs(output_docs_dir, exist_ok=True)
@@ -48,6 +48,7 @@ def background_generate(session_id, root_dir, main_path, template_path, output_d
     result_zip = os.path.join(output_dir, "results.zip")
     shutil.make_archive(os.path.splitext(result_zip)[0], 'zip', output_docs_dir)
     sessions[session_id]["result"] = result_zip
+    del stop_flags[session_id]
 
 
 def clean_old_temp_dirs(base_folder="uploads", minutes=30):
@@ -96,7 +97,7 @@ def index():
 
         # Сесія
         sessions[session_id] = {"log": os.path.join(LOGS_FOLDER, f"{session_id}.log"), "result": None}
-
+        stop_flags[session_id] = threading.Event()
         # Генерація у фоні
         t = threading.Thread(target=background_generate, args=(session_id, root_dir, main_path, template_path, output_dir, common_column, file_name_column))
         t.start()
@@ -110,6 +111,13 @@ def logs(session_id):
         return ""
     with open(log_path, encoding="utf-8") as f:
         return f.read()
+@app.route("/stop/<session_id>", methods=["POST"])
+def stop(session_id):
+    if session_id in stop_flags:
+        stop_flags[session_id].set()
+        return "OK"
+    return "Not found", 404
+
 
 @app.route("/result/<session_id>")
 def result(session_id):
